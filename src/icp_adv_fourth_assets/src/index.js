@@ -1,19 +1,34 @@
 import { icp_adv_fourth } from "../../declarations/icp_adv_fourth";
+import { Actor, HttpAgent } from "@dfinity/agent";
+import { AuthClient } from "@dfinity/auth-client";
+import { renderIndex } from "./views";
 
-document.querySelector("form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const button = e.target.querySelector("button");
+const init = async () => {
+    const authClient = await AuthClient.create();
+    if (await authClient.isAuthenticated()) {
+        handleAuthenticated(authClient);
+    }
+    await renderIndex();
+    const loginButton = document.getElementById("loginButton");
+    console.log(loginButton);
+    loginButton.onclick = async () => {
+        await authClient.login({
+            onSuccess: async () => {
+                handleAuthenticated(authClient);
+            },
+        });
+    };
+};
 
-  const name = document.getElementById("name").value.toString();
+async function handleAuthenticated(authClient) {
+    const identity = await authClient.getIdentity();
+    const agent = new HttpAgent({ identity });
+    console.log(process.env.CANISTER_ID);
+    const whoami_actor = Actor.createActor<_SERVICE>(idlFactory, {
+      agent,
+      canisterId: process.env.CANISTER_ID,
+    });
+    renderLoggedIn(whoami_actor, authClient);
+}
 
-  button.setAttribute("disabled", true);
-
-  // Interact with foo actor, calling the greet method
-  const greeting = await icp_adv_fourth.greet(name);
-
-  button.removeAttribute("disabled");
-
-  document.getElementById("greeting").innerText = greeting;
-
-  return false;
-});
+init();
