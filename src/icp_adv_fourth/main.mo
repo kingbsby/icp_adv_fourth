@@ -1,19 +1,22 @@
+import Blob "mo:base/Blob";
+import Buffer "mo:base/Buffer";
+import Cycles "mo:base/ExperimentalCycles";
+import Debug "mo:base/Debug";
+import Hash "mo:base/Hash";
+import HashMap "mo:base/HashMap";
 import IC "./ic";
 import List "mo:base/List";
-// import bool "mo:base/Bool";
 import Nat "mo:base/Nat";
-import Principal "mo:base/Principal";
-import Trie "mo:base/Trie";
-import Hash "mo:base/Hash";
-import Debug "mo:base/Debug";
 import Option "mo:base/Option";
+import Principal "mo:base/Principal";
+import SHA256 "mo:sha256/SHA256";
+import Trie "mo:base/Trie";
 import Types "./types";
 
-actor class () = self {
-    var members : [Principal] = [Principal.fromText("ea234-ybq7w-wyeio-57ez3-kl6f2-rpoub-gjeyc-kywyq-qjsze-heo7r-tae"),
-                                Principal.fromText("r7inp-6aaaa-aaaaa-aaabq-cai"),
-                                Principal.fromText("ea234-ybq7w-wyeio-57ez3-kl6f2-rpoub-gjeyc-kywyq-qjsze-heo7r-tae")];
-    var canisters : List.List<Principal> = List.nil<Principal>();
+actor class (m : Nat, memberArray : [Principal]) = self {
+    var members : [Principal] = memberArray;
+    var canisters : HashMap.HashMap<IC.canister_id, Bool> = HashMap.HashMap<IC.canister_id, Bool>(0, func(x: IC.canister_id, y: IC.canister_id) {x==y}, Principal.hash);
+    // var canisters : List.List<Principal> = List.nil<Principal>();
     // var proposals : List.List<Types.Proposal> = List.nil<Types.Proposal>();
     var proposalsTrie : Trie.Trie<Nat, Types.Proposal> = Trie.empty();
     var proposalId : Nat = 0;
@@ -27,38 +30,49 @@ actor class () = self {
             compute_allocation = null;
         };
         let ic : IC.Self = actor("aaaaa-aa");
+        Cycles.add(1_000_000_000_000);
         let result = await ic.create_canister({ settings = ?settings; });
-        canisters := List.push(result.canister_id, canisters);
+        canisters.put(result.canister_id, false);
         result.canister_id
     };
 
-    public func install_code(canister_id : IC.canister_id, wasm_module : IC.wasm_module) : async (){
-        let ic : IC.Self = actor("aaaaa-aa");
-        await ic.install_code ({
-            arg = []; 
-            wasm_module = wasm_module; 
-            mode = #install;
-            canister_id = canister_id;
-        });
+    public shared({caller}) func install_code(canister_id : IC.canister_id, wasm_module : ?Blob) : async (){
+        let beRestricted = canisters.get(canister_id);
+        switch (beRestricted){
+            case null Debug.print("canister <" # Principal.toText(canister_id) # "> not exists");
+            case (?b) {
+                if (b){
+                    await add_proposal("update canister <" # Principal.toText(canister_id) # "> with wasm_module", 
+                        #installCode, 
+                        canister_id, 
+                        wasm_module);
+                }else{
+                    await local_install_code(canister_id, Blob.toArray(Option.unwrap(wasm_module)));
+                }
+            };
+        }
     };
 
-    public func start_canister(canister_id : IC.canister_id) : async (){
+    public shared({caller}) func start_canister(canister_id : IC.canister_id) : async (){
         let ic : IC.Self = actor("aaaaa-aa");
+        Cycles.add(1_000_000_000_000);
         await ic.start_canister({canister_id = canister_id});
     };
 
-    public func stop_canister(canister_id : IC.canister_id) : async (){
+    public shared({caller}) func stop_canister(canister_id : IC.canister_id) : async (){
         let ic : IC.Self = actor("aaaaa-aa");
+        Cycles.add(1_000_000_000_000);
         await ic.stop_canister({canister_id = canister_id});
     };
 
-    public func delete_canister(canister_id : IC.canister_id) : async (){
+    public shared({caller}) func delete_canister(canister_id : IC.canister_id) : async (){
         let ic : IC.Self = actor("aaaaa-aa");
+        Cycles.add(1_000_000_000_000);
         await ic.delete_canister({canister_id = canister_id});
     };
 
     // add a proposal
-    public shared({caller}) func add_proposal(content : Text, exeMethod : Types.ExecuteMethod) : async Types.Proposal{
+    public shared({caller}) func add_proposal(content : Text, exeMethod : Types.ExecuteMethod, principal : Principal, wasm : ?Blob) : async (){
         assert(check_member(caller));
         proposalId := proposalId + 1;
 
@@ -70,15 +84,17 @@ actor class () = self {
             proposal_completed = false;
             proposal_total = members.size();
             proposal_exe_method = exeMethod;
+            proposal_exe_target = principal;
+            proposal_wasm_module = wasm;
+            proposal_wasm_hash = switch (wasm) { case null []; case (?w) SHA256.sha256(Blob.toArray(Option.unwrap(wasm))); }
         };
         // proposalsTrie := List.push<Types.Proposal>(proposal, proposals);
         proposalsTrie := Trie.put(proposalsTrie, {hash = Hash.hash(proposalId); key = proposalId},
                                 Nat.equal, proposal).0;
-        proposal
-    };
-
+    };    
+    
     //vote for a proposal
-    public shared({caller}) func vote(proposal_id : Nat) : async (){
+    public shared({caller}) func propose(proposal_id : Nat) : async (){
         assert(check_member(caller));
         
         var exeFlag : Bool = false;
@@ -96,18 +112,53 @@ actor class () = self {
                     proposal_completed = if (List.size(p.proposal_approvers) + 1 >= PASS_NUM) true else false;
                     proposal_total = members.size();
                     proposal_exe_method = p.proposal_exe_method;
+                    proposal_exe_target = p.proposal_exe_target;
+                    proposal_wasm_module = p.proposal_wasm_module;
+                    proposal_wasm_hash = p.proposal_wasm_hash;
                 };
-                // if (List.size(p.proposal_approvers) == PASS_NUM) p.proposal_completed := true;
                 proposalsTrie := Trie.replace(proposalsTrie, {hash = Hash.hash(proposal_id); key = proposal_id},
                                 Nat.equal, ?new_proposal).0;
+                Debug.print("proposal_approvers count:" # Nat.toText(List.size(new_proposal.proposal_approvers)) #
+                "    PASS_NUM :" # Nat.toText(PASS_NUM));
+                if (List.size(new_proposal.proposal_approvers) == PASS_NUM) {
+                    Debug.print("execute :" # Principal.toText(new_proposal.proposal_exe_target));
+                    await execute_proposal(new_proposal.proposal_exe_method, 
+                                    new_proposal.proposal_exe_target,
+                                    new_proposal.proposal_wasm_module);
+                };
             }
-        };
-
-        if(exeFlag){
-            addMember(Option.unwrap(proposalMaker));
         };
     };
 
+    // show members
+    public shared({caller}) func allMembers() : async [Principal] {
+        members
+    };
+
+    // get proposals
+    public shared({caller}) func get_proposals() : async [Types.Proposal]{
+        // proposalsTrie;
+        Trie.toArray(proposalsTrie, func (a : Nat, b : Types.Proposal) : Types.Proposal { b })
+    };
+
+    // get canisters
+    public shared({caller}) func get_canisters() : async [Types.CanisterInfo]{
+        var canisterInfo : List.List<Types.CanisterInfo> = List.nil<Types.CanisterInfo>();
+        for (can in canisters.entries()){
+            let ci : Types.CanisterInfo = { canister = can.0; beRestricted = can.1};
+            canisterInfo := List.push(ci, canisterInfo);
+        };
+        List.toArray(canisterInfo)
+    };
+
+    // get caller Principal
+    public shared (msg) func whoami() : async Principal {
+        msg.caller
+    };
+
+
+
+    // local func
     // check if caller is in member list
     func check_member(principal : Principal) : Bool{
         let l = List.fromArray(members);
@@ -120,14 +171,41 @@ actor class () = self {
         members := List.toArray(List.push(principal, memberList));
     };
 
-    // get proposals
-    public shared({caller}) func get_proposals() : async [Types.Proposal]{
-        // proposalsTrie;
-        Trie.toArray(proposalsTrie, func (a : Nat, b : Types.Proposal) : Types.Proposal { b })
+    // add restriction for canister
+    func add_restriction(canister : IC.canister_id) : (){
+        Debug.print("add_restriction : " # Principal.toText(canister));
+        ignore canisters.replace(canister, true);
     };
 
-    // get caller Principal
-    public shared (msg) func whoami() : async Principal {
-        msg.caller
+    // remove restriction for canister
+    func remove_restriction(canister : IC.canister_id) : (){
+        ignore canisters.replace(canister, false);
+    };
+
+    // execute proposal
+    func execute_proposal(method : Types.ExecuteMethod, target : Principal, wasm : ?Blob) : async (){
+        switch(method){
+            case (#addRestriction) {
+                add_restriction(target);
+            };
+            case (#removeRestriction) {
+                remove_restriction(target);
+            };
+            case (#installCode) {
+                await local_install_code(target, Blob.toArray(Option.unwrap(wasm)));
+            };
+            case (_) ();
+        }
+    };
+
+    func local_install_code(canister_id : IC.canister_id, wasm_module : IC.wasm_module) : async (){
+        let ic : IC.Self = actor("aaaaa-aa");
+        Cycles.add(1_000_000_000_000);
+        await ic.install_code ({
+            arg = []; 
+            wasm_module = wasm_module;
+            mode = #install;
+            canister_id = canister_id;
+        });
     };
 };

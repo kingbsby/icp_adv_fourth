@@ -1,31 +1,51 @@
 export const idlFactory = ({ IDL }) => {
   const List = IDL.Rec();
   const ExecuteMethod = IDL.Variant({
+    'addRestriction' : IDL.Null,
+    'installCode' : IDL.Null,
+    'removeRestriction' : IDL.Null,
     'delMember' : IDL.Null,
     'addMember' : IDL.Null,
+  });
+  const canister_id = IDL.Principal;
+  const CanisterInfo = IDL.Record({
+    'canister' : canister_id,
+    'beRestricted' : IDL.Bool,
   });
   List.fill(IDL.Opt(IDL.Tuple(IDL.Principal, List)));
   const Proposal = IDL.Record({
     'proposal_exe_method' : ExecuteMethod,
     'proposal_approvers' : List,
+    'proposal_wasm_hash' : IDL.Vec(IDL.Nat8),
+    'proposal_wasm_module' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'proposal_maker' : IDL.Principal,
     'proposal_total' : IDL.Nat,
     'proposal_completed' : IDL.Bool,
+    'proposal_exe_target' : IDL.Principal,
     'proposal_id' : IDL.Nat,
     'proposal_content' : IDL.Text,
   });
-  const canister_id = IDL.Principal;
-  const wasm_module = IDL.Vec(IDL.Nat8);
-  const anon_class_12_1 = IDL.Service({
-    'add_proposal' : IDL.Func([IDL.Text, ExecuteMethod], [Proposal], []),
+  const anon_class_16_1 = IDL.Service({
+    'add_proposal' : IDL.Func(
+        [IDL.Text, ExecuteMethod, IDL.Principal, IDL.Opt(IDL.Vec(IDL.Nat8))],
+        [],
+        [],
+      ),
+    'allMembers' : IDL.Func([], [IDL.Vec(IDL.Principal)], []),
     'create_canister' : IDL.Func([], [canister_id], []),
     'delete_canister' : IDL.Func([canister_id], [], []),
+    'get_canisters' : IDL.Func([], [IDL.Vec(CanisterInfo)], []),
     'get_proposals' : IDL.Func([], [IDL.Vec(Proposal)], []),
-    'install_code' : IDL.Func([canister_id, wasm_module], [], []),
+    'install_code' : IDL.Func(
+        [canister_id, IDL.Opt(IDL.Vec(IDL.Nat8))],
+        [],
+        [],
+      ),
+    'propose' : IDL.Func([IDL.Nat], [], []),
     'start_canister' : IDL.Func([canister_id], [], []),
     'stop_canister' : IDL.Func([canister_id], [], []),
-    'vote' : IDL.Func([IDL.Nat], [], []),
+    'whoami' : IDL.Func([], [IDL.Principal], []),
   });
-  return anon_class_12_1;
+  return anon_class_16_1;
 };
-export const init = ({ IDL }) => { return []; };
+export const init = ({ IDL }) => { return [IDL.Nat, IDL.Vec(IDL.Principal)]; };
